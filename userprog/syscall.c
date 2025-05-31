@@ -8,6 +8,9 @@
 #include "filesys/file.h"
 #include "filesys/filesys.h"
 #include "devices/input.h"
+#include "threads/vaddr.h"
+#include "lib/kernel/list.h"
+#include "userprog/process.h"
 
 static void syscall_handler(struct intr_frame *);
 
@@ -32,8 +35,55 @@ static void syscall_handler(struct intr_frame *f UNUSED) {
 
     if (args[0] == SYS_EXIT) {
         f->eax = args[1];
+        thread_current()->exit_code = args[1];
         printf("%s: exit(%d)\n", thread_current()->name, args[1]);
         thread_exit();
+    }
+
+    if (args[0] == SYS_EXEC) {
+        lock_acquire(&syscall_lock);
+        tid_t child = process_execute((const char *) args[1]);
+        if (child == TID_ERROR) {
+            f->eax = -1;
+        } else {
+            f->eax = child;
+            struct list_elem* elem;
+            struct thread* t;
+            struct list* all_list = get_all_list();
+            for (elem = list_begin(all_list); elem != list_end(all_list); elem = list_next(elem)) {
+                t = list_entry(elem, struct thread, allelem);
+                if (t->tid == child) {
+                    t->parent_tid = thread_current()->tid;
+                    break;
+                }
+            }
+        }
+        lock_release(&syscall_lock);
+    }
+
+    if (args[0] == SYS_WAIT) {
+        
+        struct list_elem* elem;
+        struct thread* t;
+        bool is_found = false;
+        struct list* all_list = get_all_list();
+        for (elem = list_begin(all_list); elem != list_end(all_list); elem = list_next(elem)) {
+            t = list_entry(elem, struct thread, allelem);
+            if (t->tid == (tid_t) args[1]) {
+                is_found = true;
+                break;
+            }
+        }
+        if (!is_found) {
+            f->eax = -1;
+        } else {
+            lock_acquire(&t->thread_lock);
+            while (t->is_running) {
+                cond_wait(&t->thread_finished, &t->thread_lock);
+            }
+            f->eax = t->exit_code;
+            lock_release(&t->thread_lock);
+        }
     }
 
     if (args[0] == SYS_INCREMENT) {
@@ -46,7 +96,11 @@ static void syscall_handler(struct intr_frame *f UNUSED) {
     }
 
     if (args[0] == SYS_CREATE) {
-        f->eax = filesys_create((const char *) args[1], args[2]);
+        if ((const char *) args[1] == NULL || !is_user_vaddr((const char *) args[1])) {
+            f->eax = -1;
+        } else {
+            f->eax = filesys_create((const char *) args[1], args[2]);
+        }
     }
 
     if (args[0] == SYS_REMOVE) {

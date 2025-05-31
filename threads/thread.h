@@ -94,6 +94,13 @@ struct thread {
     /* Shared between thread.c and synch.c. */
     struct list_elem elem; /* List element. */
     struct file* fd_table[128];
+    int exit_code;
+    struct condition thread_finished;
+    struct lock thread_lock;
+    tid_t parent_tid;
+    bool is_running;
+    
+    
 
 #ifdef USERPROG
     /* Owned by userprog/process.c. */
@@ -103,6 +110,8 @@ struct thread {
     /* Owned by thread.c. */
     unsigned magic; /* Detects stack overflow. */
 };
+
+struct list* get_all_list(void);
 
 /* If false (default), use round-robin scheduler.
    If true, use multi-level feedback queue scheduler.

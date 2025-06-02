@@ -25,44 +25,77 @@ static struct semaphore temporary;
 static thread_func start_process NO_RETURN;
 static bool load(const char *cmdline, void (**eip)(void), void **esp);
 
+struct start_args {
+    char* file_name;
+    struct child_process* cp;
+};
+
 /* Starts a new thread running a user program loaded from
    FILENAME.  The new thread may be scheduled (and may even exit)
    before process_execute() returns.  Returns the new process's
    thread id, or TID_ERROR if the thread cannot be created. */
 tid_t process_execute(const char *file_name) {
-    char *fn_copy;
     tid_t tid;
-
+    struct start_args* args = palloc_get_page(0);
+    if (args == NULL) {
+        return TID_ERROR;
+    }
     sema_init(&temporary, 0);
     /* Make a copy of FILE_NAME.
        Otherwise there's a race between the caller and load(). */
-    fn_copy = palloc_get_page(0);
-    if (fn_copy == NULL)
+    args->file_name = palloc_get_page(0);
+    if (args->file_name == NULL) {
+        palloc_free_page(args);
         return TID_ERROR;
-    strlcpy(fn_copy, file_name, PGSIZE);
+    }
 
     char* saveptr;
-    char* token = strtok_r(fn_copy, " ", &saveptr);
+    strlcpy(args->file_name, file_name, PGSIZE);
+    char* token = strtok_r(args->file_name, " ", &saveptr);
     if (token == NULL) {
-        palloc_free_page(fn_copy);
+        palloc_free_page(args->file_name);
+        palloc_free_page(args);
         return TID_ERROR;
     }
     char thread_name[15];
     strlcpy(thread_name, token, sizeof(thread_name));
-    strlcpy(fn_copy, file_name, PGSIZE);
+    strlcpy(args->file_name, file_name, PGSIZE);
+    args->cp = palloc_get_page(0);
+    if (args->cp == NULL) {
+        palloc_free_page(args->file_name);
+        palloc_free_page(args);
+        return TID_ERROR;
+    }
+    args->cp->tid = -1;
+    args->cp->exit_code = -1;
+    args->cp->waited = false;
+    args->cp->has_exited = false;
+    lock_init(&args->cp->lock);
+    cond_init(&args->cp->cond_wait);
     /* Create a new thread to execute FILE_NAME. */
-    tid = thread_create(thread_name, PRI_DEFAULT, start_process, fn_copy);
-    if (tid == TID_ERROR)
-        palloc_free_page(fn_copy);
+    tid = thread_create(thread_name, PRI_DEFAULT, start_process, args);
+    if (tid == TID_ERROR) {
+        palloc_free_page(args->cp);
+        palloc_free_page(args->file_name);
+        palloc_free_page(args);
+        return TID_ERROR;
+    }
+    
+    list_push_back(&thread_current()->children, &args->cp->elem);
     return tid;
 }
 
 /* A thread function that loads a user process and starts it
    running. */
 static void start_process(void *file_name_) {
-    char *file_name = file_name_;
+    struct start_args* args = (struct start_args*) file_name_;
+    char *file_name = args->file_name;
+    struct child_process* cp = args->cp;
+    cp->tid = thread_current()->tid;
+    
     struct intr_frame if_;
     bool success;
+    
     /* Initialize interrupt frame and load executable. */
     memset(&if_, 0, sizeof if_);
     if_.gs = if_.fs = if_.es = if_.ds = if_.ss = SEL_UDSEG;
@@ -72,29 +105,41 @@ static void start_process(void *file_name_) {
     //success = load(file_name, &if_.eip, &if_.esp);
     char* fn_copy = palloc_get_page(0);
     if (fn_copy == NULL) {
+        palloc_free_page(args->file_name);
+        palloc_free_page(cp);
+        palloc_free_page(args);
         thread_exit();
     }
     strlcpy(fn_copy, file_name, PGSIZE);
-    char* argv[(PGSIZE/2)/4];
+    // char* argv[(PGSIZE/2)/4];
+    char** argv = palloc_get_page(0);
+    if (argv == NULL) {
+        palloc_free_page(fn_copy);
+        palloc_free_page(args->file_name);
+        palloc_free_page(cp);
+        palloc_free_page(args);
+        thread_exit();
+    }
     int argc = 0;
     char* saveptr;
     char* token;
     size_t total_bytes = 0;
     token = strtok_r(fn_copy, " ", &saveptr);
     if (token == NULL) {
+        palloc_free_page(argv);
         palloc_free_page(fn_copy);
+        palloc_free_page(args->file_name);
+        palloc_free_page(cp);
+        palloc_free_page(args);
         thread_exit();
     }
-    success = load(token, &if_.eip, &if_.esp);
-    /* If load failed, quit. */
-    if (!success) {
-        palloc_free_page(fn_copy);
-        thread_exit();
-    }
-
     while (token != NULL) {
         if (argc > PGSIZE/8 || total_bytes + strlen(token) + 1 > PGSIZE/2) {
+            palloc_free_page(argv);
             palloc_free_page(fn_copy);
+            palloc_free_page(args->file_name);
+            palloc_free_page(cp);
+            palloc_free_page(args);
             thread_exit();
         }
         argv[argc] = token;
@@ -103,7 +148,27 @@ static void start_process(void *file_name_) {
         token = strtok_r(NULL, " ", &saveptr);
     }
     argv[argc] = NULL;
-    char* arg_addresses_on_stack[argc];
+    success = load(argv[0], &if_.eip, &if_.esp);
+    /* If load failed, quit. */
+    if (!success) {
+        palloc_free_page(argv);
+        palloc_free_page(fn_copy);
+        palloc_free_page(args->file_name);
+        palloc_free_page(cp);
+        palloc_free_page(args);
+        thread_exit();
+    }
+    
+    // char* arg_addresses_on_stack[argc];
+    char** arg_addresses_on_stack = palloc_get_page(0);
+    if (arg_addresses_on_stack == NULL) {
+        palloc_free_page(argv);
+        palloc_free_page(fn_copy);
+        palloc_free_page(args->file_name);
+        palloc_free_page(cp);
+        palloc_free_page(args);
+        thread_exit();
+    }
     for (int i = argc - 1; i >= 0; i--) {
         if_.esp -= strlen(argv[i]) + 1;
         memcpy(if_.esp, argv[i], strlen(argv[i]) + 1);
@@ -133,9 +198,15 @@ static void start_process(void *file_name_) {
     if_.esp -= sizeof(void*);
     *(void**)if_.esp = NULL;
 
+    thread_current()->cp = cp;
+    
+    palloc_free_page(argv);
+    palloc_free_page(arg_addresses_on_stack);
+    palloc_free_page(args->file_name);
+    palloc_free_page(args);
     palloc_free_page(fn_copy);
-    
-    
+
+        
     /* Start the user process by simulating a return from an
        interrupt, implemented by intr_exit (in
        threads/intr-stubs.S).  Because intr_exit takes all of its

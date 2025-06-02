@@ -97,18 +97,9 @@ void thread_init(void) {
     init_thread(initial_thread, "main", PRI_DEFAULT);
     initial_thread->status = THREAD_RUNNING;
     initial_thread->tid = allocate_tid();
-
     for (int i = 0; i < 128; i++) {
         initial_thread->fd_table[i] = NULL;
     }
-    lock_init(&initial_thread->thread_lock);
-    cond_init(&initial_thread->thread_finished);
-    initial_thread->is_running = true;
-    lock_acquire(&initial_thread->thread_lock);
-}
-
-struct list* get_all_list(void) {
-    return &all_list;
 }
 
 /* Starts preemptive thread scheduling by enabling interrupts.
@@ -277,17 +268,12 @@ void thread_exit(void) {
     process_exit();
 #endif
 
-    thread_current()->is_running = false;
-    cond_broadcast(&thread_current()->thread_finished, &thread_current()->thread_lock);
-    lock_release(&thread_current()->thread_lock);
-
     /* Remove thread from all threads list, set our status to dying,
        and schedule another process.  That process will destroy us
        when it calls thread_schedule_tail(). */
     intr_disable();
     list_remove(&thread_current()->allelem);
     thread_current()->status = THREAD_DYING;
-
     schedule();
     NOT_REACHED();
 }
@@ -431,20 +417,18 @@ static void init_thread(struct thread *t, const char *name, int priority) {
     t->stack = (uint8_t *) t + PGSIZE;
     t->priority = priority;
     t->magic = THREAD_MAGIC;
-
-    for (int i = 0; i < 128; i++) {
+    
+    t->fd_table[0] = (void *)1;
+    t->fd_table[1] = (void *)1;
+    for (int i = 2; i < 128; i++) {
         t->fd_table[i] = NULL;
     }
-    lock_init(&t->thread_lock);
-    cond_init(&t->thread_finished);
-    t->is_running = true;
-    lock_acquire(&t->thread_lock);
-    
+    list_init(&t->children);
+    t->exit_code = -1;
 
     old_level = intr_disable();
     list_push_back(&all_list, &t->allelem);
     intr_set_level(old_level);
-    
 }
 
 /* Allocates a SIZE-byte frame at the top of thread T's stack and

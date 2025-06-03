@@ -8,6 +8,7 @@
 #include <string.h>
 
 #include "filesys/directory.h"
+#include "syscall-nr.h"
 #include "filesys/file.h"
 #include "filesys/filesys.h"
 #include "threads/flags.h"
@@ -57,20 +58,24 @@ bool validate_user_string(const char *string);
 
 bool validate_user_string(const char *string)
 {
-    if (string == NULL) {
+    if (string == NULL || !is_user_vaddr(string)) {
         return false;
     }
     
-    for (const char *ptr = string; ; ptr++) {
-        if (!is_user_vaddr(ptr) || is_kernel_vaddr(ptr)) {
+    // Need to check one byte at a time without dereferencing
+    for (size_t i = 0; ; i++) {
+        // Make sure each character is valid
+        if (!is_user_vaddr(string + i)) {
             return false;
         }
         
-        if (pagedir_get_page(thread_current()->pagedir, ptr) == NULL) {
+        char *kpage = pagedir_get_page(thread_current()->pagedir, string + i);
+        if (kpage == NULL) {
             return false;
         }
         
-        if (*ptr == '\0') {
+        // Check if we've reached the end of the string
+        if (*(kpage + ((uintptr_t)(string + i) & PGMASK)) == '\0') {
             break;
         }
     }
@@ -177,23 +182,28 @@ static void syscall_handler(struct intr_frame *f UNUSED) {
             printf("%s: exit(-1)\n", thread_current()->name);
             thread_exit();
         }
+        
+        // Use a global lock for all filesystem operations
         lock_acquire(&syscall_lock);
+        
         struct file* new_file = filesys_open((const char *) args[1]);
         if (new_file == NULL) {
             f->eax = -1;
         } else {
             int fd_index = 2;
-            while (thread_current()->fd_table[fd_index] != NULL && fd_index < 128) {
+            while (fd_index < 128 && thread_current()->fd_table[fd_index] != NULL) {
                 fd_index++;
             }
-            if (fd_index > 127) {
+            
+            if (fd_index >= 128) {
+                file_close(new_file);
                 f->eax = -1;
-            }
-            else {
+            } else {
                 thread_current()->fd_table[fd_index] = new_file;
                 f->eax = fd_index;
             }
         }
+        
         lock_release(&syscall_lock);
     }
 

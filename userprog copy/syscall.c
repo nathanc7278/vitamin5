@@ -99,17 +99,17 @@ static void syscall_handler(struct intr_frame *f UNUSED) {
     // printf("System call number: %d\n", args[0]);
 
     if (!validate_user_buffer(args, sizeof(uint32_t), false)) {
-        // printf("%s: exit(-1)\n", thread_current()->name);
+        printf("%s: exit(-1)\n", thread_current()->name);
         thread_exit();
     }
 
     if (args[0] == SYS_EXEC) {
         if (!validate_user_buffer(args, 2 * sizeof(uint32_t), false)) {
-            // printf("%s: exit(-1)\n", thread_current()->name);
+            printf("%s: exit(-1)\n", thread_current()->name);
             thread_exit();
         }
         if (!validate_user_string((const char*)args[1])) {
-            // printf("%s: exit(-1)\n", thread_current()->name);
+            printf("%s: exit(-1)\n", thread_current()->name);
             thread_exit();
         }
         f->eax = process_execute((const char*)args[1]);
@@ -117,7 +117,7 @@ static void syscall_handler(struct intr_frame *f UNUSED) {
 
     if (args[0] == SYS_WAIT) {
         if (!validate_user_buffer(args, 2 * sizeof(uint32_t), false)) {
-            // printf("%s: exit(-1)\n", thread_current()->name);
+            printf("%s: exit(-1)\n", thread_current()->name);
             thread_exit();
         }
         f->eax = process_wait(args[1]);
@@ -148,7 +148,7 @@ static void syscall_handler(struct intr_frame *f UNUSED) {
             arg_count = 3;
             break;
         default:
-            // printf("%s: exit(-1)\n", thread_current()->name);
+            printf("%s: exit(-1)\n", thread_current()->name);
             thread_exit();
     }
 
@@ -170,7 +170,7 @@ static void syscall_handler(struct intr_frame *f UNUSED) {
 
     if (args[0] == SYS_CREATE) {
         if (!validate_user_string((const char *) args[1])) {
-            // printf("%s: exit(-1)\n", thread_current()->name);
+            printf("%s: exit(-1)\n", thread_current()->name);
             thread_exit();
         }
         f->eax = filesys_create((const char *) args[1], args[2]);
@@ -182,7 +182,7 @@ static void syscall_handler(struct intr_frame *f UNUSED) {
 
     if (args[0] == SYS_OPEN) {
         if (!validate_user_string((const char *) args[1])) {
-            // printf("%s: exit(-1)\n", thread_current()->name);
+            printf("%s: exit(-1)\n", thread_current()->name);
             thread_exit();
         }
         
@@ -221,11 +221,11 @@ static void syscall_handler(struct intr_frame *f UNUSED) {
 
     if (args[0] == SYS_READ) {
         if (!validate_user_buffer((void *) args[2], args[3], true)) {
-            // printf("%s: exit(-1)\n", thread_current()->name);
+            printf("%s: exit(-1)\n", thread_current()->name);
             thread_exit();
         }
         lock_acquire(&syscall_lock);
-        if (args[1] > 127 && args[0] < 0) {
+        if (args[1] > 127) {
             f->eax = -1;
         } else if (args[1] == 1) {
             f->eax = -1;
@@ -250,7 +250,7 @@ static void syscall_handler(struct intr_frame *f UNUSED) {
 
     if (args[0] == SYS_WRITE) {
         if (!validate_user_buffer((void*)args[2], args[3], false)) {
-            // printf("%s: exit(-1)\n", thread_current()->name);
+            printf("%s: exit(-1)\n", thread_current()->name);
             thread_exit();
         }
         lock_acquire(&syscall_lock);
@@ -307,11 +307,8 @@ static void syscall_handler(struct intr_frame *f UNUSED) {
 
     if (args[0] == SYS_CLOSE) {
         lock_acquire(&syscall_lock);
-        if (args[1] < 0 || args[1] > 127) {
+        if (args[1] > 127 || args[1] < 2) {
             f->eax = -1;
-        } else if (args[1] == 0 || args[1] == 1) {
-            // stdin/stdout: do nothing, but succeed
-            f->eax = 0;
         } else {
             struct file* file_opened = thread_current()->fd_table[args[1]];
             if (file_opened == NULL) {
@@ -319,7 +316,6 @@ static void syscall_handler(struct intr_frame *f UNUSED) {
             } else {
                 file_close(file_opened);
                 thread_current()->fd_table[args[1]] = NULL;
-                f->eax = 0;
             }
         }
         lock_release(&syscall_lock);

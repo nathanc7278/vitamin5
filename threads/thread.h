@@ -94,6 +94,7 @@ struct thread {
     /* Shared between thread.c and synch.c. */
     struct list_elem elem; /* List element. */
     struct file* fd_table[128];
+    struct file* executable;  // Add this field
     struct list children;
     struct child_process* cp;
     int exit_code;

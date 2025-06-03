@@ -418,12 +418,15 @@ static void init_thread(struct thread *t, const char *name, int priority) {
     t->priority = priority;
     t->magic = THREAD_MAGIC;
     
+    // Initialize file descriptor table
     for (int i = 0; i < 128; i++) {
         t->fd_table[i] = NULL;
     }
-    t->fd_table[0] = (void *)1;  
-    t->fd_table[1] = (void *)1;  
+    t->fd_table[0] = (void *)1;  // stdin
+    t->fd_table[1] = (void *)1;  // stdout
     
+    // Initialize process-related fields
+    t->executable = NULL;  // Add this
     list_init(&t->children);
     t->cp = NULL;
     t->exit_code = 0;

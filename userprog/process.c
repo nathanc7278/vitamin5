@@ -174,6 +174,14 @@ static void start_process(void *file_name_) {
         thread_exit();
     }
     
+    // Add this after successful load:
+    // Deny writes to the executable file
+    struct file *executable = filesys_open(argv[0]);
+    if (executable != NULL) {
+        file_deny_write(executable);
+        thread_current()->executable = executable;
+    }
+    
     // Load was successful
     cp->load_success = true;
     
@@ -291,6 +299,7 @@ void process_exit(void) {
     
     // Close the executable file to allow writing to it
     if (cur->executable != NULL) {
+        file_allow_write(cur->executable);  // Allow writes before closing
         file_close(cur->executable);
         cur->executable = NULL;
     }
@@ -323,6 +332,13 @@ void process_exit(void) {
        to the kernel-only page directory. */
     pd = cur->pagedir;
     if (pd != NULL) {
+        /* Correct ordering here is crucial.  We must set
+           cur->pagedir to NULL before switching page directories,
+           so that a timer interrupt can't switch back to the
+           process page directory.  We must activate the base page
+           directory before destroying the process's page
+           directory, or our active page directory will be one
+           that's been freed (and cleared). */
         cur->pagedir = NULL;
         pagedir_activate(NULL);
         pagedir_destroy(pd);

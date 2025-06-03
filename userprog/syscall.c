@@ -62,9 +62,10 @@ bool validate_user_string(const char *string)
         return false;
     }
     
-    // Need to check one byte at a time without dereferencing
-    for (size_t i = 0; ; i++) {
-        // Make sure each character is valid
+    // Check the entire string in one go by finding its length first
+    size_t max_len = 0;
+    for (size_t i = 0; i < PGSIZE; i++) {
+        // Make sure each character address is valid
         if (!is_user_vaddr(string + i)) {
             return false;
         }
@@ -76,8 +77,14 @@ bool validate_user_string(const char *string)
         
         // Check if we've reached the end of the string
         if (*(kpage + ((uintptr_t)(string + i) & PGMASK)) == '\0') {
+            max_len = i + 1;  // Include the null terminator
             break;
         }
+    }
+    
+    // If we never found a null terminator within PGSIZE, that's an error
+    if (max_len == 0) {
+        return false;
     }
     
     return true;

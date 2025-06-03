@@ -113,6 +113,7 @@ static void syscall_handler(struct intr_frame *f UNUSED) {
             thread_exit();
         }
         f->eax = process_execute((const char*)args[1]);
+        return;
     }
 
     if (args[0] == SYS_WAIT) {
@@ -121,6 +122,7 @@ static void syscall_handler(struct intr_frame *f UNUSED) {
             thread_exit();
         }
         f->eax = process_wait(args[1]);
+        return;
     }
 
     int syscall_num = args[0];
@@ -152,8 +154,8 @@ static void syscall_handler(struct intr_frame *f UNUSED) {
             thread_exit();
     }
 
-    if (!validate_user_buffer(args, sizeof(uint32_t), false)) {
-        // printf("%s: exit(-1)\n", thread_current()->name);
+    if (!validate_user_buffer(args, (arg_count + 1) * sizeof(uint32_t), false)) {
+        printf("%s: exit(-1)\n", thread_current()->name);
         thread_exit();
     }
 
@@ -166,6 +168,7 @@ static void syscall_handler(struct intr_frame *f UNUSED) {
 
     if (args[0] == SYS_INCREMENT) {
         f->eax = args[1] + 1;
+        return;
     }
 
     if (args[0] == SYS_CREATE) {
@@ -173,11 +176,15 @@ static void syscall_handler(struct intr_frame *f UNUSED) {
             printf("%s: exit(-1)\n", thread_current()->name);
             thread_exit();
         }
+        lock_acquire(&syscall_lock);
         f->eax = filesys_create((const char *) args[1], args[2]);
+        lock_release(&syscall_lock);
+        return;
     }
 
     if (args[0] == SYS_REMOVE) {
         f->eax = filesys_remove((const char *)args[1]);
+        return;
     }
 
     if (args[0] == SYS_OPEN) {
@@ -208,6 +215,7 @@ static void syscall_handler(struct intr_frame *f UNUSED) {
         }
         
         lock_release(&syscall_lock);
+        return;
     }
 
     if (args[0] == SYS_FILESIZE) {
@@ -217,6 +225,7 @@ static void syscall_handler(struct intr_frame *f UNUSED) {
         } else {
             f->eax = file_length(file_opened);
         }
+        return;
     }
 
     if (args[0] == SYS_READ) {
@@ -246,6 +255,7 @@ static void syscall_handler(struct intr_frame *f UNUSED) {
             }
         }
         lock_release(&syscall_lock);
+        return;
     }
 
     if (args[0] == SYS_WRITE) {
@@ -272,6 +282,7 @@ static void syscall_handler(struct intr_frame *f UNUSED) {
             }
         }
         lock_release(&syscall_lock);
+        return;
     }
 
     if (args[0] == SYS_SEEK) {
@@ -288,6 +299,7 @@ static void syscall_handler(struct intr_frame *f UNUSED) {
             }
         }
         lock_release(&syscall_lock);
+        return;
     }
 
     if (args[0] == SYS_TELL) {
@@ -303,6 +315,7 @@ static void syscall_handler(struct intr_frame *f UNUSED) {
             }
         }
         lock_release(&syscall_lock);
+        return;
     }
 
     if (args[0] == SYS_CLOSE) {
@@ -319,6 +332,7 @@ static void syscall_handler(struct intr_frame *f UNUSED) {
             }
         }
         lock_release(&syscall_lock);
+        return;
     }
 
     if (args[0] == SYS_HALT) {

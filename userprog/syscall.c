@@ -1,17 +1,25 @@
-#include "userprog/syscall.h"
+#include "userprog/process.h"
 
+#include <debug.h>
+#include <inttypes.h>
+#include <round.h>
 #include <stdio.h>
-#include <syscall-nr.h>
+#include <stdlib.h>
+#include <string.h>
 
-#include "threads/interrupt.h"
-#include "threads/thread.h"
+#include "filesys/directory.h"
 #include "filesys/file.h"
 #include "filesys/filesys.h"
-#include "devices/input.h"
-#include "userprog/process.h"
+#include "threads/flags.h"
+#include "threads/init.h"
+#include "threads/interrupt.h"
+#include "threads/palloc.h"
+#include "threads/synch.h"
+#include "threads/thread.h"
 #include "threads/vaddr.h"
+#include "userprog/gdt.h"
 #include "userprog/pagedir.h"
-#include "devices/shutdown.h"
+#include "userprog/tss.h"
 
 static void syscall_handler(struct intr_frame *);
 
@@ -142,9 +150,9 @@ static void syscall_handler(struct intr_frame *f UNUSED) {
     }
 
     if (args[0] == SYS_EXIT) {
-        f->eax = args[1];
-        thread_current()->exit_code = args[1];
+        thread_current()->exit_code = args[1];  
         printf("%s: exit(%d)\n", thread_current()->name, args[1]);
+        f->eax = args[1];
         thread_exit();
     }
 

@@ -21,13 +21,14 @@
 #include "userprog/pagedir.h"
 #include "userprog/tss.h"
 
-static struct semaphore temporary;
+
 static thread_func start_process NO_RETURN;
 static bool load(const char *cmdline, void (**eip)(void), void **esp);
 
 struct start_args {
     char* file_name;
     struct child_process* cp;
+    struct semaphore load_sema;  // Add semaphore for load synchronization
 };
 
 /* Starts a new thread running a user program loaded from
@@ -40,7 +41,10 @@ tid_t process_execute(const char *file_name) {
     if (args == NULL) {
         return TID_ERROR;
     }
-    sema_init(&temporary, 0);
+    
+    // Initialize load synchronization semaphore
+    sema_init(&args->load_sema, 0);
+    
     /* Make a copy of FILE_NAME.
        Otherwise there's a race between the caller and load(). */
     args->file_name = palloc_get_page(0);
@@ -70,11 +74,24 @@ tid_t process_execute(const char *file_name) {
     args->cp->exit_code = -1;
     args->cp->waited = false;
     args->cp->has_exited = false;
+    args->cp->load_success = false;  // Track if load was successful
     lock_init(&args->cp->lock);
     cond_init(&args->cp->cond_wait);
     /* Create a new thread to execute FILE_NAME. */
     tid = thread_create(thread_name, PRI_DEFAULT, start_process, args);
     if (tid == TID_ERROR) {
+        palloc_free_page(args->cp);
+        palloc_free_page(args->file_name);
+        palloc_free_page(args);
+        return TID_ERROR;
+    }
+    
+    // Wait for the child process to finish loading
+    sema_down(&args->load_sema);
+    
+    // Check if load was successful
+    if (!args->cp->load_success) {
+        // Load failed, clean up and return error
         palloc_free_page(args->cp);
         palloc_free_page(args->file_name);
         palloc_free_page(args);
@@ -102,24 +119,22 @@ static void start_process(void *file_name_) {
     if_.cs = SEL_UCSEG;
     if_.eflags = FLAG_IF | FLAG_MBS;
     
-    //success = load(file_name, &if_.eip, &if_.esp);
     char* fn_copy = palloc_get_page(0);
     if (fn_copy == NULL) {
-        palloc_free_page(args->file_name);
-        palloc_free_page(cp);
-        palloc_free_page(args);
+        cp->load_success = false;
+        sema_up(&args->load_sema);
         thread_exit();
     }
     strlcpy(fn_copy, file_name, PGSIZE);
-    // char* argv[(PGSIZE/2)/4];
+    
     char** argv = palloc_get_page(0);
     if (argv == NULL) {
         palloc_free_page(fn_copy);
-        palloc_free_page(args->file_name);
-        palloc_free_page(cp);
-        palloc_free_page(args);
+        cp->load_success = false;
+        sema_up(&args->load_sema);
         thread_exit();
     }
+    
     int argc = 0;
     char* saveptr;
     char* token;
@@ -128,18 +143,17 @@ static void start_process(void *file_name_) {
     if (token == NULL) {
         palloc_free_page(argv);
         palloc_free_page(fn_copy);
-        palloc_free_page(args->file_name);
-        palloc_free_page(cp);
-        palloc_free_page(args);
+        cp->load_success = false;
+        sema_up(&args->load_sema);
         thread_exit();
     }
+    
     while (token != NULL) {
         if (argc > PGSIZE/8 || total_bytes + strlen(token) + 1 > PGSIZE/2) {
             palloc_free_page(argv);
             palloc_free_page(fn_copy);
-            palloc_free_page(args->file_name);
-            palloc_free_page(cp);
-            palloc_free_page(args);
+            cp->load_success = false;
+            sema_up(&args->load_sema);
             thread_exit();
         }
         argv[argc] = token;
@@ -148,27 +162,30 @@ static void start_process(void *file_name_) {
         token = strtok_r(NULL, " ", &saveptr);
     }
     argv[argc] = NULL;
+    
     success = load(argv[0], &if_.eip, &if_.esp);
+    
     /* If load failed, quit. */
     if (!success) {
         palloc_free_page(argv);
         palloc_free_page(fn_copy);
-        palloc_free_page(args->file_name);
-        palloc_free_page(cp);
-        palloc_free_page(args);
+        cp->load_success = false;
+        sema_up(&args->load_sema);
         thread_exit();
     }
     
-    // char* arg_addresses_on_stack[argc];
+    // Load was successful
+    cp->load_success = true;
+    
     char** arg_addresses_on_stack = palloc_get_page(0);
     if (arg_addresses_on_stack == NULL) {
         palloc_free_page(argv);
         palloc_free_page(fn_copy);
-        palloc_free_page(args->file_name);
-        palloc_free_page(cp);
-        palloc_free_page(args);
+        cp->load_success = false;
+        sema_up(&args->load_sema);
         thread_exit();
     }
+    
     for (int i = argc - 1; i >= 0; i--) {
         if_.esp -= strlen(argv[i]) + 1;
         memcpy(if_.esp, argv[i], strlen(argv[i]) + 1);
@@ -202,11 +219,11 @@ static void start_process(void *file_name_) {
     
     palloc_free_page(argv);
     palloc_free_page(arg_addresses_on_stack);
-    palloc_free_page(args->file_name);
-    palloc_free_page(args);
     palloc_free_page(fn_copy);
-
-        
+    
+    // Signal that loading is complete
+    sema_up(&args->load_sema);
+    
     /* Start the user process by simulating a return from an
        interrupt, implemented by intr_exit (in
        threads/intr-stubs.S).  Because intr_exit takes all of its
@@ -222,19 +239,79 @@ static void start_process(void *file_name_) {
    exception), returns -1.  If TID is invalid or if it was not a
    child of the calling process, or if process_wait() has already
    been successfully called for the given TID, returns -1
-   immediately, without waiting.
-
-   This function will be implemented in problem 2-2.  For now, it
-   does nothing. */
-int process_wait(tid_t child_tid UNUSED) {
-    sema_down(&temporary);
-    return 0;
+   immediately, without waiting. */
+int process_wait(tid_t child_tid) {
+    struct thread *cur = thread_current();
+    struct list_elem *e;
+    struct child_process *cp = NULL;
+    
+    // Find the child process in our children list
+    for (e = list_begin(&cur->children); e != list_end(&cur->children); e = list_next(e)) {
+        struct child_process *temp_cp = list_entry(e, struct child_process, elem);
+        if (temp_cp->tid == child_tid) {
+            cp = temp_cp;
+            break;
+        }
+    }
+    
+    // Child not found or invalid TID
+    if (cp == NULL) {
+        return -1;
+    }
+    
+    // Check if we've already waited on this child
+    lock_acquire(&cp->lock);
+    if (cp->waited) {
+        lock_release(&cp->lock);
+        return -1;
+    }
+    
+    // Mark as waited on
+    cp->waited = true;
+    
+    // Wait for child to exit if it hasn't already
+    while (!cp->has_exited) {
+        cond_wait(&cp->cond_wait, &cp->lock);
+    }
+    
+    int exit_code = cp->exit_code;
+    lock_release(&cp->lock);
+    
+    // Remove from children list and free memory
+    list_remove(&cp->elem);
+    palloc_free_page(cp);
+    
+    return exit_code;
 }
 
 /* Free the current process's resources. */
 void process_exit(void) {
     struct thread *cur = thread_current();
     uint32_t *pd;
+    
+    // Close all open files
+    for (int i = 2; i < 128; i++) {
+        if (cur->fd_table[i] != NULL) {
+            file_close(cur->fd_table[i]);
+            cur->fd_table[i] = NULL;
+        }
+    }
+    
+    // Update child process structure if we have one
+    if (cur->cp != NULL) {
+        lock_acquire(&cur->cp->lock);
+        cur->cp->has_exited = true;
+        cur->cp->exit_code = cur->exit_code;
+        cond_broadcast(&cur->cp->cond_wait);
+        lock_release(&cur->cp->lock);
+    }
+    
+    // Clean up any remaining child processes
+    while (!list_empty(&cur->children)) {
+        struct list_elem *e = list_pop_front(&cur->children);
+        struct child_process *cp = list_entry(e, struct child_process, elem);
+        palloc_free_page(cp);
+    }
 
     /* Destroy the current process's page directory and switch back
        to the kernel-only page directory. */
@@ -251,7 +328,6 @@ void process_exit(void) {
         pagedir_activate(NULL);
         pagedir_destroy(pd);
     }
-    sema_up(&temporary);
 }
 
 /* Sets up the CPU for running user code in the current

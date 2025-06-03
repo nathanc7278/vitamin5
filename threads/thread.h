@@ -115,6 +115,7 @@ struct child_process {
    struct lock lock;
    struct condition cond_wait;
    struct list_elem elem;
+   bool load_success;
 };
 
 /* If false (default), use round-robin scheduler.

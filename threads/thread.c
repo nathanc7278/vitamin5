@@ -418,13 +418,15 @@ static void init_thread(struct thread *t, const char *name, int priority) {
     t->priority = priority;
     t->magic = THREAD_MAGIC;
     
-    t->fd_table[0] = (void *)1;
-    t->fd_table[1] = (void *)1;
-    for (int i = 2; i < 128; i++) {
+    for (int i = 0; i < 128; i++) {
         t->fd_table[i] = NULL;
     }
+    t->fd_table[0] = (void *)1;  
+    t->fd_table[1] = (void *)1;  
+    
     list_init(&t->children);
-    t->exit_code = -1;
+    t->cp = NULL;
+    t->exit_code = 0;
 
     old_level = intr_disable();
     list_push_back(&all_list, &t->allelem);

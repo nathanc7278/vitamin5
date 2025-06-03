@@ -152,9 +152,9 @@ static void syscall_handler(struct intr_frame *f UNUSED) {
             thread_exit();
     }
 
-    if (!validate_user_buffer(args, sizeof(uint32_t), false)) {
-        // printf("%s: exit(-1)\n", thread_current()->name);
-        thread_exit();
+    if (!validate_user_buffer(args, (arg_count + 1) * sizeof(uint32_t), false)) {
+    printf("%s: exit(-1)\n", thread_current()->name);
+    thread_exit();
     }
 
     if (args[0] == SYS_EXIT) {

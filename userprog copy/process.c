@@ -86,19 +86,18 @@ tid_t process_execute(const char *file_name) {
         return TID_ERROR;
     }
     
+    // ADD THE CHILD TO THE LIST RIGHT HERE, BEFORE WAITING
+    list_push_back(&thread_current()->children, &args->cp->elem);
+
     // Wait for the child process to finish loading
     sema_down(&args->load_sema);
     
     // Check if load was successful
     if (!args->cp->load_success) {
-        // Load failed, clean up and return error
-        palloc_free_page(args->cp);
-        palloc_free_page(args->file_name);
-        palloc_free_page(args);
+        // Load failed, but do NOT free cp here; let wait() handle cleanup
         return TID_ERROR;
     }
     
-    list_push_back(&thread_current()->children, &args->cp->elem);
     return tid;
 }
 

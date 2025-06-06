@@ -308,7 +308,8 @@ int process_wait(tid_t child_tid) {
         // DEBUG: Child not found
         //printf("DEBUG: process_wait: child_tid=%d not found in parent %d's list\n", child_tid, cur->tid);
         //fflush(stdout);
-        printf('NULL CHILD WAITED -1');
+        //printf('NULL CHILD WAITED -1');
+        //printf('got -1 At CHILD IS NULL');
         return -1;
     }
 
@@ -319,7 +320,7 @@ int process_wait(tid_t child_tid) {
         // DEBUG: Already waited
         //printf("DEBUG: process_wait: already waited on child_tid=%d\n", child_tid);
         //fflush(stdout);
-        printf("CHILD ALREADY WAITED");
+        //printf("got -1 at CHILD ALREADY WAITED");
         return -1;
     }
 
@@ -341,7 +342,7 @@ int process_wait(tid_t child_tid) {
     // Remove from children list and free memory
     list_remove(&cp->elem);
     palloc_free_page(cp);
-
+    //printf("EXITING WITH CODE %d", exit_code);
     return exit_code;
 }
 

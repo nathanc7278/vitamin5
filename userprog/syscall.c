@@ -51,42 +51,29 @@ bool validate_user_buffer(void *pointer, size_t length, bool check_writable)
         return true;
     }
 
-bool validate_user_string(const char *string)
-{
+bool validate_user_string(const char *string) {
     if (!is_user_vaddr(string)) {
-        printf("DEBUG: NOT A USR ADDRESS GLOBAL, string is %d \n\n", &string);
         return false;
     }
-    
-    // Check the entire string in one go by finding its length first
-    size_t max_len = 0;
-    for (size_t i = 0; i < PGSIZE; i++) {
-        // Make sure each character address is valid
+
+    for (size_t i = 0;; i++) {
         if (!is_user_vaddr(string + i)) {
-            printf("DEBUG: NOT A USR ADDRESS FOR CHARACTER, string is %d\n\n", &string);
             return false;
         }
-        
-        char *kpage = pagedir_get_page(thread_current()->pagedir, string + i);
-        if (kpage == NULL) {
-            printf("DEBUG: KPAGE IS NULL, string is %d\n\n", &string);
+
+        char *kaddr = pagedir_get_page(thread_current()->pagedir, string + i);
+        if (kaddr == NULL) {
             return false;
         }
-        
-        // Check if we've reached the end of the string
-        if (*(kpage + ((uintptr_t)(string + i) & PGMASK)) == '\0') {
-            max_len = i + 1;  // Include the null terminator
-            break;
+
+        if (*kaddr == '\0') {
+            return true;
+        }
+
+        if (i >= PGSIZE - 1) {
+            return false;
         }
     }
-    
-    // If we never found a null terminator within PGSIZE, that's an error
-    if (max_len == 0) {
-        printf("DEBUG: NO NULL TERMINATOR BECAUSE MAX_LEN IS 0, string is %d\n\n", &string);
-        return false;
-    }
-    
-    return true;
 }
 
 
@@ -103,7 +90,7 @@ static void syscall_handler(struct intr_frame *f UNUSED) {
     // printf("System call number: %d\n", args[0]);
 
     if (!validate_user_buffer(args, sizeof(uint32_t), false)) {
-        printf("DEBUG: GLOBAL EXIT");
+        //printf("DEBUG: GLOBAL EXIT");
         printf("%s: exit(-1)\n", thread_current()->name);
         thread_exit();
     }
@@ -111,13 +98,13 @@ static void syscall_handler(struct intr_frame *f UNUSED) {
     if (args[0] == SYS_EXEC) {
         if (!validate_user_buffer(args, 2 * sizeof(uint32_t), false)) {
             
-            printf("DEBUG: SYS_EXEC_1 EXIT");
+            //printf("DEBUG: SYS_EXEC_1 EXIT");
             printf("%s: exit(-1)\n", thread_current()->name);
             thread_exit();
         }
         // CULPRIT 1
         if (!validate_user_string((const char*)args[1])) {
-            printf("DEBUG: SYS_EXEC_2 EXIT");
+            //printf("DEBUG: SYS_EXEC_2 EXIT");
             printf("%s: exit(-1)\n", thread_current()->name);
             thread_exit();
         }
@@ -129,8 +116,8 @@ static void syscall_handler(struct intr_frame *f UNUSED) {
 
     if (args[0] == SYS_WAIT) {
         if (!validate_user_buffer(args, 2 * sizeof(uint32_t), false)) {
-            printf("DEBUG: SYS_WAIT EXIT");
-            printf("WE ARE AT VALIDATE USER BUFFER IF STATEMENT BIATCH");
+            //printf("DEBUG: SYS_WAIT EXIT");
+            // printf("WE ARE AT VALIDATE USER BUFFER IF STATEMENT BIATCH");
             printf("%s: exit(-1)\n", thread_current()->name);
             thread_exit();
         }
@@ -163,13 +150,13 @@ static void syscall_handler(struct intr_frame *f UNUSED) {
             arg_count = 3;
             break;
         default:
-            printf("DEBUG: WHO_TF_KNOWS EXIT");
+            //printf("DEBUG: WHO_TF_KNOWS EXIT");
             printf("%s: exit(-1)\n", thread_current()->name);
             thread_exit();
     }
 
     if (!validate_user_buffer(args, (arg_count + 1) * sizeof(uint32_t), false)) {
-        printf("DEBUG: ANOTHER_WTF EXIT");
+        //printf("DEBUG: ANOTHER_WTF EXIT");
         printf("%s: exit(-1)\n", thread_current()->name);
         thread_exit();
     }
@@ -177,7 +164,7 @@ static void syscall_handler(struct intr_frame *f UNUSED) {
     if (args[0] == SYS_EXIT) {
         // lock_acquire(&syscall_lock);
         thread_current()->exit_code = args[1];  
-        printf("DEBUG: PROPER EXIT");
+        //printf("DEBUG: PROPER EXIT");
         printf("%s: exit(%d)\n", thread_current()->name, args[1]);
         f->eax = args[1];
         thread_exit();
@@ -190,7 +177,7 @@ static void syscall_handler(struct intr_frame *f UNUSED) {
 
     if (args[0] == SYS_CREATE) {
         if (!validate_user_string((const char *) args[1])) {
-            printf("DEBUG: SYS_CREATE EXIT");
+            //printf("DEBUG: SYS_CREATE EXIT");
             printf("%s: exit(-1)\n", thread_current()->name);
             thread_exit();
         }
@@ -208,7 +195,7 @@ static void syscall_handler(struct intr_frame *f UNUSED) {
     if (args[0] == SYS_OPEN) {
         // CULPRIT 2
         if (!validate_user_string((const char *) args[1])) {
-            printf("DEBUG: SYS_OPEN EXIT");
+            //printf("DEBUG: SYS_OPEN EXIT");
             printf("%s: exit(-1)\n", thread_current()->name);
             thread_exit();
         }
@@ -250,7 +237,7 @@ static void syscall_handler(struct intr_frame *f UNUSED) {
 
     if (args[0] == SYS_READ) {
         if (!validate_user_buffer((void *) args[2], args[3], true)) {
-            printf("DEBUG: SYS_READ EXIT");
+            //printf("DEBUG: SYS_READ EXIT");
             printf("%s: exit(-1)\n", thread_current()->name);
             thread_exit();
         }
@@ -281,7 +268,7 @@ static void syscall_handler(struct intr_frame *f UNUSED) {
 
     if (args[0] == SYS_WRITE) {
         if (!validate_user_buffer((void*)args[2], args[3], false)) {
-            printf("DEBUG: SYS_WRITE EXIT");
+            //printf("DEBUG: SYS_WRITE EXIT");
             printf("%s: exit(-1)\n", thread_current()->name);
             thread_exit();
         }

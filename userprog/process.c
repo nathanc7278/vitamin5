@@ -36,6 +36,7 @@ struct start_args {
    before process_execute() returns.  Returns the new process's
    thread id, or TID_ERROR if the thread cannot be created. */
 tid_t process_execute(const char *file_name) {
+    //printf("DEBUG: process_execute entered\n"); 
     tid_t tid;
     struct start_args* args = palloc_get_page(0);
     if (args == NULL) {
@@ -77,6 +78,11 @@ tid_t process_execute(const char *file_name) {
     args->cp->load_success = false;  // Track if load was successful
     lock_init(&args->cp->lock);
     cond_init(&args->cp->cond_wait);
+
+    // DEBUG: After setting up args
+    //printf("DEBUG: process_execute: about to create thread '%s' with args->cp=%p\n", thread_name, args->cp);
+    //fflush(stdout);
+
     /* Create a new thread to execute FILE_NAME. */
     tid = thread_create(thread_name, PRI_DEFAULT, start_process, args);
     if (tid == TID_ERROR) {
@@ -85,10 +91,18 @@ tid_t process_execute(const char *file_name) {
         palloc_free_page(args);
         return TID_ERROR;
     }
-    
+
+    // DEBUG: After thread_create
+    //printf("DEBUG: process_execute: created child tid=%d, cp=%p\n", tid, args->cp);
+    //fflush(stdout);
+
     // Wait for the child process to finish loading
     sema_down(&args->load_sema);
-    
+
+    // DEBUG: After sema_down
+    //printf("DEBUG: process_execute: load_sema signaled, load_success=%d, cp->tid=%d\n", args->cp->load_success, args->cp->tid);
+    //fflush(stdout);
+
     // Check if load was successful
     if (!args->cp->load_success) {
         // Load failed, clean up and return error
@@ -97,28 +111,42 @@ tid_t process_execute(const char *file_name) {
         palloc_free_page(args);
         return TID_ERROR;
     }
-    
+
     list_push_back(&thread_current()->children, &args->cp->elem);
+
+    palloc_free_page(args->file_name);
+    palloc_free_page(args);
+
+    // DEBUG: After adding to children list
+    //printf("DEBUG: process_execute: added child cp=%p (tid=%d) to parent %s\n", args->cp, args->cp->tid, thread_current()->name);
+    //fflush(stdout);
+
     return tid;
 }
 
 /* A thread function that loads a user process and starts it
    running. */
 static void start_process(void *file_name_) {
+    //printf("DEBUG: start_process entered\n");
     struct start_args* args = (struct start_args*) file_name_;
     char *file_name = args->file_name;
     struct child_process* cp = args->cp;
     cp->tid = thread_current()->tid;
-    
+
+    // DEBUG: At the start of start_process
+    //printf("DEBUG: start_process: thread tid=%d, cp=%p, file_name=%s\n", thread_current()->tid, cp, file_name);
+    //fflush(stdout);
+    thread_current()->exit_code = -1;
+
     struct intr_frame if_;
     bool success;
-    
+
     /* Initialize interrupt frame and load executable. */
     memset(&if_, 0, sizeof if_);
     if_.gs = if_.fs = if_.es = if_.ds = if_.ss = SEL_UDSEG;
     if_.cs = SEL_UCSEG;
     if_.eflags = FLAG_IF | FLAG_MBS;
-    
+
     char* fn_copy = palloc_get_page(0);
     if (fn_copy == NULL) {
         cp->load_success = false;
@@ -164,13 +192,21 @@ static void start_process(void *file_name_) {
     argv[argc] = NULL;
     
     success = load(argv[0], &if_.eip, &if_.esp);
-    
+
+    // DEBUG: After load
+    //printf("DEBUG: start_process: load() returned %d for %s\n", success, argv[0]);
+    //fflush(stdout);
+
     /* If load failed, quit. */
     if (!success) {
+        printf("%s: exit(-1)\n", argv[0]);
+        //fflush(stdout);
         palloc_free_page(argv);
         palloc_free_page(fn_copy);
         cp->load_success = false;
         sema_up(&args->load_sema);
+        //printf("DEBUG: start_process: thread tid=%d exiting (load failed)\n", thread_current()->tid);
+        //fflush(stdout);
         thread_exit();
     }
     
@@ -231,13 +267,11 @@ static void start_process(void *file_name_) {
     
     // Signal that loading is complete
     sema_up(&args->load_sema);
-    
-    /* Start the user process by simulating a return from an
-       interrupt, implemented by intr_exit (in
-       threads/intr-stubs.S).  Because intr_exit takes all of its
-       arguments on the stack in the form of a `struct intr_frame',
-       we just point the stack pointer (%esp) to our stack frame
-       and jump to it. */
+
+    // DEBUG: Before jumping to user code
+    //printf("DEBUG: start_process: thread tid=%d starting user process\n", thread_current()->tid);
+    //fflush(stdout);
+
     asm volatile("movl %0, %%esp; jmp intr_exit" : : "g"(&if_) : "memory");
     NOT_REACHED();
 }
@@ -252,43 +286,62 @@ int process_wait(tid_t child_tid) {
     struct thread *cur = thread_current();
     struct list_elem *e;
     struct child_process *cp = NULL;
-    
+
+    // DEBUG: Before searching for child
+    //printf("DEBUG: process_wait: parent tid=%d waiting for child_tid=%d\n", cur->tid, child_tid);
+    //fflush(stdout);
+
     // Find the child process in our children list
     for (e = list_begin(&cur->children); e != list_end(&cur->children); e = list_next(e)) {
         struct child_process *temp_cp = list_entry(e, struct child_process, elem);
+        // DEBUG: Inside the for loop in process_wait
+        //printf("DEBUG: process_wait: checking child cp=%p tid=%d\n", temp_cp, temp_cp->tid);
+        //fflush(stdout);
         if (temp_cp->tid == child_tid) {
             cp = temp_cp;
             break;
         }
     }
-    
+
     // Child not found or invalid TID
     if (cp == NULL) {
+        // DEBUG: Child not found
+        //printf("DEBUG: process_wait: child_tid=%d not found in parent %d's list\n", child_tid, cur->tid);
+        //fflush(stdout);
+        printf('NULL CHILD WAITED -1');
         return -1;
     }
-    
+
     // Check if we've already waited on this child
     lock_acquire(&cp->lock);
     if (cp->waited) {
         lock_release(&cp->lock);
+        // DEBUG: Already waited
+        //printf("DEBUG: process_wait: already waited on child_tid=%d\n", child_tid);
+        //fflush(stdout);
+        printf("CHILD ALREADY WAITED");
         return -1;
     }
-    
+
     // Mark as waited on
     cp->waited = true;
-    
+
     // Wait for child to exit if it hasn't already
     while (!cp->has_exited) {
         cond_wait(&cp->cond_wait, &cp->lock);
     }
-    
+
     int exit_code = cp->exit_code;
     lock_release(&cp->lock);
-    
+
+    // DEBUG: Before returning exit_code
+    //printf("DEBUG: process_wait: returning exit_code=%d for child_tid=%d\n", exit_code, child_tid);
+    //fflush(stdout);
+
     // Remove from children list and free memory
     list_remove(&cp->elem);
     palloc_free_page(cp);
-    
+
     return exit_code;
 }
 
@@ -296,14 +349,32 @@ int process_wait(tid_t child_tid) {
 void process_exit(void) {
     struct thread *cur = thread_current();
     uint32_t *pd;
-    
+
+    // DEBUG: At the start of process_exit
+    //printf("DEBUG: process_exit: tid=%d, exit_code=%d, cp=%p\n", cur->tid, cur->exit_code, cur->cp);
+    //fflush(stdout);
+
+    struct list_elem *e;
+
+    if(!list_empty(&cur->children)) {
+        for (e = list_begin(&cur->children); e != list_end(&cur->children); e = list_next(e)) {
+            struct child_process *temp_cp = list_entry(e, struct child_process, elem);
+            // DEBUG: Cleaning up child
+            //printf("DEBUG: process_exit: cleaning up child cp=%p\n", temp_cp);
+            //fflush(stdout);
+            if (!temp_cp->waited) {
+                process_wait(temp_cp->tid);
+            }
+        }
+    }
+
     // Close the executable file to allow writing to it
     if (cur->executable != NULL) {
         file_allow_write(cur->executable);  // Allow writes before closing
         file_close(cur->executable);
         cur->executable = NULL;
     }
-    
+
     // Close all open files
     for (int i = 2; i < 128; i++) {
         if (cur->fd_table[i] != NULL) {
@@ -311,20 +382,26 @@ void process_exit(void) {
             cur->fd_table[i] = NULL;
         }
     }
-    
+
     // Update child process structure if we have one
     if (cur->cp != NULL) {
         lock_acquire(&cur->cp->lock);
         cur->cp->has_exited = true;
         cur->cp->exit_code = cur->exit_code;
-        cond_broadcast(&cur->cp->cond_wait);
+        cond_broadcast(&cur->cp->cond_wait, &cur->cp->lock);
+        // DEBUG: Signaling parent
+        //printf("DEBUG: process_exit: signaling parent, cp=%p, exit_code=%d\n", cur->cp, cur->exit_code);
+        //fflush(stdout);
         lock_release(&cur->cp->lock);
     }
-    
+
     // Clean up any remaining child processes
     while (!list_empty(&cur->children)) {
         struct list_elem *e = list_pop_front(&cur->children);
         struct child_process *cp = list_entry(e, struct child_process, elem);
+        // DEBUG: Freeing leftover child
+        //printf("DEBUG: process_exit: freeing leftover child cp=%p\n", cp);
+        //fflush(stdout);
         palloc_free_page(cp);
     }
 
@@ -332,13 +409,6 @@ void process_exit(void) {
        to the kernel-only page directory. */
     pd = cur->pagedir;
     if (pd != NULL) {
-        /* Correct ordering here is crucial.  We must set
-           cur->pagedir to NULL before switching page directories,
-           so that a timer interrupt can't switch back to the
-           process page directory.  We must activate the base page
-           directory before destroying the process's page
-           directory, or our active page directory will be one
-           that's been freed (and cleared). */
         cur->pagedir = NULL;
         pagedir_activate(NULL);
         pagedir_destroy(pd);
